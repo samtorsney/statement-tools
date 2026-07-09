@@ -26,6 +26,10 @@ secrets.txt
 # Explicit path (not a glob) so categorise/builtin_rules.yaml stays tracked.
 category_rules.yaml
 
+# Generated reports (Sankey/monthly/savings HTML, delta + unmatched-transfer
+# CSVs) -- every artifact in here contains real financial data.
+reports/
+
 # ---------------------------------------------------------------------------
 # Python / tooling
 # ---------------------------------------------------------------------------
