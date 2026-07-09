@@ -38,17 +38,26 @@ def check_balance_continuity(
     for source_file, file_rows in by_file.items():
         prev_balance = None
         for row in file_rows:
-            if row.balance is None:
+            if prev_balance is None:
+                # Nothing to compare against yet; seed from this row's
+                # printed balance (if it has one) and move on.
+                prev_balance = row.balance
                 continue
-            if prev_balance is not None:
-                expected = prev_balance + row.amount
+
+            expected = prev_balance + row.amount
+            if row.balance is not None:
                 if abs(expected - row.balance) > tolerance:
                     raise BalanceContinuityError(
                         f"balance discontinuity in {source_file} "
                         f"(page={row.page}, row={row.row}): "
                         f"expected {expected}, printed {row.balance}"
                     )
-            prev_balance = row.balance
+                prev_balance = row.balance
+            else:
+                # No printed balance to check this row against; carry the
+                # computed running total forward so a later printed value
+                # is still checked against the full chain of amounts.
+                prev_balance = expected
 
 
 def dedupe_rows(rows: Iterable[CanonicalRow]) -> List[CanonicalRow]:
