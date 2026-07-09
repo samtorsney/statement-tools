@@ -132,6 +132,54 @@ def test_paired_transfer_becomes_account_to_account_link_not_spend():
     assert LAYER_SUBCATEGORY not in nodes.layers
 
 
+def test_bidirectional_paired_transfers_aggregate_to_single_net_link():
+    """Matched pairs flowing both ways between the same two accounts draw
+    ONE ribbon in the net direction (600 out, 250 back -> 350 net), with
+    the gross both-way amounts carried on the link for hover text --
+    never one ribbon per direction (which rendered as a giant U-shaped
+    loop between the two same-layer account nodes)."""
+    frame = frame_of(
+        [
+            (date(2026, 1, 5), "-600.00", "boi_current", "Transfer", "", True),
+            (date(2026, 1, 5), "600.00", "revolut_current", "Transfer", "", True),
+            (date(2026, 1, 6), "-250.00", "revolut_current", "Transfer", "", True),
+            (date(2026, 1, 6), "250.00", "boi_current", "Transfer", "", True),
+        ]
+    )
+    nodes, links = aggregate(frame)
+    by_label = links_by_labels(nodes, links)
+
+    net_link = (LAYER_ACCOUNT, "boi_current", LAYER_ACCOUNT, "revolut_current")
+    reverse_link = (LAYER_ACCOUNT, "revolut_current", LAYER_ACCOUNT, "boi_current")
+    assert reverse_link not in by_label  # exactly one ribbon, never two
+    assert by_label[net_link]["value"] == Decimal("350.00")
+    assert by_label[net_link]["count"] == 4  # all four legs counted
+    assert by_label[net_link]["gross_with"] == Decimal("600.00")
+    assert by_label[net_link]["gross_against"] == Decimal("250.00")
+
+
+def test_exactly_offsetting_paired_transfers_draw_nothing():
+    """When the two directions' gross flows are equal the net is zero: no
+    account->account ribbon is drawn at all (documented in the module
+    docstring -- there is no flow for hover data to attach to; the
+    overview's health panel still reports transfer volume)."""
+    frame = frame_of(
+        [
+            (date(2026, 1, 5), "-400.00", "boi_current", "Transfer", "", True),
+            (date(2026, 1, 5), "400.00", "revolut_current", "Transfer", "", True),
+            (date(2026, 1, 6), "-400.00", "revolut_current", "Transfer", "", True),
+            (date(2026, 1, 6), "400.00", "boi_current", "Transfer", "", True),
+        ]
+    )
+    nodes, links = aggregate(frame)
+    account_links = [
+        (src, dst)
+        for (src, dst) in links
+        if nodes.layers[src] == LAYER_ACCOUNT and nodes.layers[dst] == LAYER_ACCOUNT
+    ]
+    assert account_links == []
+
+
 def test_unmatched_transfer_aggregates_into_single_transfers_unmatched_node():
     """Regression test for problem 3 in the design spec: unpaired transfer
     legs used to be silently dropped (drawn outflow != actual outflow).
@@ -288,10 +336,15 @@ def test_person_names_never_become_node_labels():
 def test_flow_conservation_across_account_layer():
     """Regression test for problem 3: total ribbon value leaving the
     account layer must equal non-transfer spend plus the absolute value of
-    unmatched negative transfer legs (and symmetrically for inflow) --
-    "leaving"/"entering" means crossing out of the account layer, so
-    matched account->account transfer ribbons (which stay within the
-    layer) are correctly excluded from both sides."""
+    unmatched negative transfer legs (and symmetrically for inflow).
+
+    "Leaving"/"entering" means CROSSING OUT OF the account layer, so
+    matched transfer flow -- now drawn as a single NET-direction
+    account->account ribbon per account pair -- stays within the layer and
+    is excluded from both sides. The arithmetic is therefore identical
+    before and after net-direction aggregation: netting matched pairs
+    changes only intra-layer ribbons, never the layer-crossing totals this
+    invariant is about."""
     frame = make_sankey_frame()
     result = net_transfers(frame)
     netted = result.netted

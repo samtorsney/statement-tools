@@ -16,9 +16,17 @@ Node layers, left to right:
   3. child categories   -- subcategory of the same rows, when they clear
                            ``min_share_sub``
 
-Matched transfer pairs render as direct account -> account links (source =
-the paying leg's account, target = the receiving leg's account), bypassing
-the category layers entirely.
+Matched transfer pairs render as direct account -> account links,
+bypassing the category layers entirely -- aggregated per account pair into
+a SINGLE link in the NET direction. Both directions' gross flows are
+summed first; one ribbon is drawn for ``|gross A->B - gross B->A|``,
+pointing whichever way the net flows, and the link's hover text carries
+both gross amounts alongside the net. This replaces the earlier
+one-link-per-direction rendering, which drew a huge U-shaped loop between
+the two same-layer account nodes whenever pairs flowed both ways. If the
+two directions exactly offset (net == 0), no ribbon is drawn at all --
+there is no flow for hover data to attach to; the overview's health panel
+still reports transfer volume.
 
 Unmatched transfer legs (``pair_id`` is null) are no longer dropped: every
 one of them is aggregated into a single ``Transfers (unmatched)`` node at
@@ -66,8 +74,16 @@ Node ordering, height and color follow the ``dataviz`` skill:
   categorical palette (see the ``dataviz`` skill's ``references/
   palette.md``), minus its first slot (reserved for the income family so
   the two node families never share a hue). Subcategory nodes inherit a
-  lighter tint of their parent's hue. Links are tinted by their source
-  node's color at low alpha. Accounts are neutral gray. "(uncategorised)"
+  lighter tint of their parent's hue. Links are tinted at low alpha by
+  whichever endpoint carries identity: a link leaving an account node
+  takes its DESTINATION's hue (otherwise the neutral account gray would
+  dominate the diagram's ink -- account->category links are most of the
+  drawn area), while every other link takes its SOURCE's hue (income->
+  account keeps the income hue, category->subcategory keeps the parent
+  hue, unmatched-credit node->account keeps the warning hue). Net
+  account->account transfer ribbons stay neutral gray -- both endpoints
+  are accounts, so there is no identity to carry. Accounts are neutral
+  gray. "(uncategorised)"
   and "Transfers (unmatched)" use the fixed status "warning" color, never
   reused for anything else. "Other" / "Other income" use a separate
   neutral tone (distinct from both the account gray and the warning color)
@@ -209,7 +225,10 @@ class NodeRegistry:
         return self._index[k]
 
 
-LinkTotals = Dict[str, object]  # {"value": Decimal, "count": int}
+# {"value": Decimal, "count": int}; net account->account transfer links
+# additionally carry {"gross_with": Decimal, "gross_against": Decimal} --
+# the gross flow with and against the drawn (net) direction.
+LinkTotals = Dict[str, object]
 
 
 def _add_link(
@@ -238,16 +257,39 @@ def aggregate(
 
     is_transfer = frame["is_transfer"].astype(bool)
 
-    # -- Matched transfer pairs: direct account -> account links. ---------
+    # -- Matched transfer pairs: ONE net-direction link per account pair
+    # (see module docstring). Gross both-way totals ride along on the link
+    # so build_sankey can surface them in the hover text. ------------------
     paired = frame[is_transfer & frame["pair_id"].notna()]
+    pair_gross: Dict[Tuple[str, str], Dict[str, object]] = {}
     for _pair_id, group in paired.groupby("pair_id"):
         if len(group) != 2:
             continue  # malformed pairing -- ignore rather than guess
         row_a, row_b = (group.iloc[0], group.iloc[1])
         payer, payee = (row_a, row_b) if row_a["amount"] < 0 else (row_b, row_a)
-        src = nodes.get(LAYER_ACCOUNT, str(payer["account"]), str(payer["account"]), "account")
-        dst = nodes.get(LAYER_ACCOUNT, str(payee["account"]), str(payee["account"]), "account")
-        _add_link(links, src, dst, abs(payer["amount"]), 2)
+        payer_acct, payee_acct = str(payer["account"]), str(payee["account"])
+        key = (payer_acct, payee_acct) if payer_acct <= payee_acct else (payee_acct, payer_acct)
+        gross = pair_gross.setdefault(key, {"fwd": Decimal("0"), "rev": Decimal("0"), "count": 0})
+        direction = "fwd" if (payer_acct, payee_acct) == key else "rev"
+        gross[direction] += abs(payer["amount"])
+        gross["count"] += 2
+
+    for (acct_a, acct_b), gross in pair_gross.items():
+        net = gross["fwd"] - gross["rev"]
+        if net == 0:
+            continue  # fully offsetting flows: nothing to draw (documented)
+        if net > 0:
+            src_acct, dst_acct = acct_a, acct_b
+            gross_with, gross_against = gross["fwd"], gross["rev"]
+        else:
+            src_acct, dst_acct = acct_b, acct_a
+            gross_with, gross_against = gross["rev"], gross["fwd"]
+        src = nodes.get(LAYER_ACCOUNT, src_acct, src_acct, "account")
+        dst = nodes.get(LAYER_ACCOUNT, dst_acct, dst_acct, "account")
+        _add_link(links, src, dst, abs(net), gross["count"])
+        # Gross both-way flow, oriented to the drawn (net) direction.
+        links[(src, dst)]["gross_with"] = gross_with
+        links[(src, dst)]["gross_against"] = gross_against
 
     # -- Unmatched transfer legs: one aggregate node, never the row's own
     # category/subcategory text (which may be a person/payee name). ------
@@ -462,17 +504,50 @@ def build_sankey(
     node_colors = [colors[i] for i in new_order]
     node_customdata = [[totals[i][0], totals[i][1]] for i in new_order]
 
+    default_link_hover = (
+        "%{source.label} -> %{target.label}"
+        "<br>amount: %{customdata[0]:.2f}"
+        "<br>transactions: %{customdata[1]}<extra></extra>"
+    )
+    transfer_link_hover = (
+        "%{source.label} -> %{target.label}"
+        "<br>net: %{customdata[0]:.2f}"
+        "<br>gross with flow: %{customdata[2]:.2f}"
+        "<br>gross against: %{customdata[3]:.2f}"
+        "<br>transactions: %{customdata[1]}<extra></extra>"
+    )
+
     sources: List[int] = []
     targets: List[int] = []
     values: List[float] = []
     link_colors: List[str] = []
     link_customdata: List[List[float]] = []
+    link_hovers: List[str] = []
     for (src, dst), agg in links.items():
         sources.append(remap[src])
         targets.append(remap[dst])
         values.append(float(agg["value"]))
-        link_colors.append(_rgba(colors[src], LINK_ALPHA))
-        link_customdata.append([float(agg["value"]), agg["count"]])
+        # Tint by whichever endpoint carries identity: destination hue for
+        # links leaving an account node (else neutral account gray would
+        # dominate the ink), source hue for everything else. Account ->
+        # account net transfer links stay gray via colors[dst] == gray.
+        if nodes.layers[src] == LAYER_ACCOUNT:
+            link_colors.append(_rgba(colors[dst], LINK_ALPHA))
+        else:
+            link_colors.append(_rgba(colors[src], LINK_ALPHA))
+        if "gross_with" in agg:
+            link_customdata.append(
+                [
+                    float(agg["value"]),
+                    agg["count"],
+                    float(agg["gross_with"]),
+                    float(agg["gross_against"]),
+                ]
+            )
+            link_hovers.append(transfer_link_hover)
+        else:
+            link_customdata.append([float(agg["value"]), agg["count"], 0.0, 0.0])
+            link_hovers.append(default_link_hover)
 
     max_layer_count = max((len(g) for g in layer_groups.values()), default=1)
     height = max(MIN_HEIGHT, max_layer_count * PX_PER_NODE + HEIGHT_MARGIN)
@@ -496,9 +571,7 @@ def build_sankey(
                     value=values,
                     color=link_colors,
                     customdata=link_customdata,
-                    hovertemplate="%{source.label} -> %{target.label}"
-                    "<br>amount: %{customdata[0]:.2f}"
-                    "<br>transactions: %{customdata[1]}<extra></extra>",
+                    hovertemplate=link_hovers,
                 ),
             )
         ]
