@@ -148,10 +148,15 @@ def test_run_uncategorised_beyond_tolerance_exits_nonzero(tmp_path, capsys):
     assert out_csv.exists()
 
     out = capsys.readouterr().out
-    # Count-only summary: no description text, no amounts.
-    assert "MYSTERY MERCHANT ZZZ" not in out
-    assert "42" not in out
-    assert "1 uncategorised" in out
+    # Count-only summary: no description text, no amounts. The CLI echoes
+    # the --out PATH on stdout, and pytest's tmp_path contains a
+    # run-numbered directory (pytest-NNN) that can legitimately contain
+    # any digit substring -- scrub it before the digit assertions or this
+    # test flakes whenever NNN happens to contain "42".
+    out_scrubbed = out.replace(str(tmp_path), "<tmp>")
+    assert "MYSTERY MERCHANT ZZZ" not in out_scrubbed
+    assert "42" not in out_scrubbed
+    assert "1 uncategorised" in out_scrubbed
 
 
 def test_run_tolerance_allows_small_uncategorised(tmp_path):
@@ -235,7 +240,10 @@ def test_report_writes_sorted_rows_and_aggregation(tmp_path, capsys):
     assert agg[1]["total_amount"] == "-12.50"
 
     # stdout carries counts and paths only -- never transaction data.
-    out = capsys.readouterr().out
+    # Scrub the echoed tmp_path first: its run-numbered directory
+    # (pytest-NNN) can legitimately contain "900" (same flake class as
+    # test_run_uncategorised_beyond_tolerance_exits_nonzero).
+    out = capsys.readouterr().out.replace(str(tmp_path), "<tmp>")
     assert "MYSTERY" not in out
     assert "900" not in out
     assert "3 uncategorised row(s)" in out
