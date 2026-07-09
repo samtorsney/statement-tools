@@ -4,3 +4,4 @@ numpy==2.0.2
 pypdfium2==5.3.0
 pillow==11.3.0
 pikepdf==9.11.0
+pyyaml==6.0.3

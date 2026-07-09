@@ -1,0 +1,36 @@
+# Revolut standard CSV export ("Account statement" -> CSV).
+#
+# Source columns: Type, Product, Started Date, Completed Date, Description,
+# Amount, Fee, Currency, State, Balance. Only the columns with a home in the
+# canonical schema are mapped; Type/Product/Completed Date/Fee/State carry
+# no canonical field and are intentionally left unmapped.
+meta:
+  name: revolut_current
+  institution: "Revolut"
+  country: IE
+  source: csv
+
+csv:
+  encoding: utf-8
+  delimiter: ","
+  column_map:
+    "Started Date": date
+    "Description": description
+    "Amount": amount
+    "Currency": currency
+    "Balance": balance
+
+amounts:
+  style: signed
+  thousands: ""
+  decimal: "."
+
+dates:
+  format: "%Y-%m-%d %H:%M:%S"
+  fill: none
+
+balance:
+  present: true
+  validate: continuity
+
+skip_rows: []

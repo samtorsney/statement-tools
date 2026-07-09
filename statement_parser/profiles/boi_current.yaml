@@ -1,0 +1,49 @@
+# Bank of Ireland current-account PDF statement.
+#
+# Reproduces boi_statement_parser.py's layout heuristics exactly, so this
+# profile passes the parity gate against the legacy script on real
+# statements. In particular, the `align` values below are chosen to
+# reproduce the legacy build_columns() "if i < 3: use left edge, else
+# midpoint" boundary rule -- NOT the illustrative align values shown in the
+# design spec's schema example, which describe the general mechanism but
+# don't literally match this bank's layout. Concretely: the boundary before
+# a column is resolved by *that column's* align, and the legacy rule makes
+# every boundary except the last one (before Balance) a left-edge boundary.
+meta:
+  name: boi_current
+  institution: "Bank of Ireland"
+  country: IE
+  source: pdf
+
+page_detect:
+  strategy: header_match
+
+columns:
+  - { header: "Date",                field: date,        align: left_edge }
+  - { header: "Transaction details", field: description, align: left_edge }
+  - { header: "Payments - out",      field: out,         align: left_edge }
+  - { header: "Payments - in",       field: in,          align: left_edge }
+  - { header: "Balance",             field: balance,     align: midpoint }
+
+table_end:
+  strategy: spacing_gap
+
+rows:
+  line_tolerance: 3
+  multiline: merge_into_previous
+
+amounts:
+  style: in_out
+  thousands: ","
+  decimal: "."
+
+dates:
+  format: "%d %b %Y"
+  fill: forward
+
+balance:
+  present: true
+  validate: continuity
+
+skip_rows:
+  - { field: description, equals: "BALANCE FORWARD" }
