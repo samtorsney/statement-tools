@@ -88,9 +88,9 @@ Terminal wizard for turning uncategorised descriptions into rules.
 - `LICENSE`: MIT, current year, the repo owner's name (from git config).
 - **Delete the legacy `boi_statement_parser.py`** — parity with the new
   engine was proven in Build 2; keeping it in a public repo is confusing.
-  Also delete `scripts/parity_check.py` (its purpose is served) and remove
-  references to both from FINDINGS.md is NOT required — FINDINGS.md is a
-  historical document; leave it as is.
+  Also delete `scripts/parity_check.py` (its purpose is served). Do NOT edit
+  FINDINGS.md to remove references to them — it is a historical document;
+  leave it as is.
 - Notebooks (`*.ipynb`) were never committed and stay untracked; no action.
 - `CLAUDE.md` stays — it documents the privacy workflow honestly.
 
