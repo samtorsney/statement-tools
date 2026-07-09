@@ -139,6 +139,12 @@ narrow signature + a docs line.
   nonzero exit, no silent partial output. Balance continuity check: every
   printed balance must equal previous balance + amount; any mismatch means a
   row was dropped, split, or mis-columned.
+- **Multi-file merge (`validate.py`):** when parsing several statements at
+  once, overlapping periods are deduplicated on
+  `(date, description, amount, balance, account)` — including balance
+  disambiguates legitimate same-day duplicates. Period gaps between
+  statements and balance discontinuity across statement boundaries are
+  reported as warnings (FINDINGS §4).
 
 ## Profile authoring support
 
@@ -172,6 +178,28 @@ overlay image is a possible later addition.
 Known bugs in the current code (documented in `FINDINGS.md` §2) are fixed by
 construction in the new engine rather than patched in the old script — except
 anything needed to run the parity comparison.
+
+## Build instructions (for the implementing agent)
+
+- **Model: `sonnet`** — the largest build in the sequence (layout geometry,
+  strategy registries, fixture generator), but fully specified here; `haiku`
+  would not hold the whole design, `opus` is not needed. Escalate to `opus`
+  only if the profile-driven round-trip tests fail twice for design (not
+  implementation-typo) reasons.
+- Prerequisite: the legacy-baseline build (working `boi_statement_parser.py`,
+  requirements manifest) must be complete — parity needs a runnable baseline.
+- Add `pyyaml` and `reportlab` (pinned) to the requirements files.
+- Read `CLAUDE.md` first. Hard privacy rules: never read non-redacted PDFs,
+  any real `.csv`/`.xlsx`, `redact_terms.txt`, or notebooks. All CI-style
+  verification uses synthetic fixtures from `tests/fixtures/make_pdf.py`.
+- **Parity gate:** the real-statement parity check is executed as a script
+  that compares old vs new output and prints ONLY: row counts per file,
+  equal/not-equal booleans per column, and aggregate sums matching (bool).
+  Never print transaction rows. If parity fails, report the boolean summary
+  and stop — the user inspects the details locally.
+- Build order within this spec: profile loader + schema errors → PDF engine
+  on synthetic fixture → BOI profile → CSV engine + Revolut profile →
+  validate.py → CLI → parity gate. Commit per step.
 
 ## Out of scope
 
