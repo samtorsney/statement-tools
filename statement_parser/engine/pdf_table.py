@@ -156,6 +156,15 @@ def extract_page(page: Any, profile: Profile, page_number: int) -> List[dict]:
     multiline_fn = strategies.MULTILINE[profile.rows.multiline]
     merged = multiline_fn(bucketed, profile)
 
+    # A genuine transaction always has some description text (that's how a
+    # continuation line is recognised as belonging to one, above). A row
+    # with content in another column but a blank description is not a
+    # transaction -- most likely non-table text (a subtotal/footer line,
+    # a page note) that the table_end heuristic failed to exclude
+    # (FINDINGS.md #3). Drop it rather than let it crash amount coercion or
+    # masquerade as a transaction with a nonsensical value.
+    merged = [row for row in merged if row.get("description", "").strip()]
+
     for row in merged:
         row["_page"] = page_number
 

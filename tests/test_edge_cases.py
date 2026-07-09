@@ -129,6 +129,26 @@ def test_same_day_duplicate_transactions_both_kept_by_engine(tmp_path, boi_profi
     assert parsed[0].balance != parsed[1].balance  # distinguishable by running balance
 
 
+def test_footer_noise_past_table_end_is_dropped_not_crashed(tmp_path, boi_profile):
+    """A non-transaction line (e.g. a subtotal/footer label) that a
+    table_end heuristic fails to exclude, and that lands in a non-
+    description column with no description text of its own, must be
+    dropped rather than crash amount coercion (FINDINGS.md #3)."""
+    rows = [
+        {"date": "05 Jan 2026", "description": "OPENING CREDIT", "out": "", "in": "500.00", "balance": "500.00"},
+        {"date": "06 Jan 2026", "description": "SHOP", "out": "50.00", "in": "", "balance": "450.00"},
+        # Noise row: text lands in the "in" column, description is blank.
+        {"date": "", "description": "", "out": "", "in": "SUBTOTAL", "balance": ""},
+    ]
+    pdf_path = tmp_path / "footer_noise.pdf"
+    render_pdf(pdf_path, boi_profile, [rows], BOI_COLUMN_X)
+
+    parsed = parse_pdf(pdf_path, boi_profile)
+
+    assert len(parsed) == 2
+    assert [r.description for r in parsed] == ["OPENING CREDIT", "SHOP"]
+
+
 def test_corrupted_balance_triggers_loud_continuity_failure(tmp_path, boi_profile):
     rows = [
         {"date": "05 Jan 2026", "description": "OPENING CREDIT", "out": "", "in": "500.00", "balance": "500.00"},

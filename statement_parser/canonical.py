@@ -65,7 +65,13 @@ def parse_decimal(text: Optional[str], thousands: str, decimal: str) -> Optional
     try:
         value = Decimal(text)
     except InvalidOperation as exc:
-        raise CoercionError(f"cannot parse amount/balance {text!r}") from exc
+        # Deliberately do not include the raw text in this message: it may
+        # be a fragment of real statement content (e.g. non-transaction
+        # footer/subtotal text a table-boundary heuristic failed to
+        # exclude), and this error can propagate into logs/tracebacks.
+        raise CoercionError(
+            f"cannot parse amount/balance text ({len(text)} char(s))"
+        ) from exc
 
     if negative:
         value = -value
@@ -83,8 +89,9 @@ def _parse_dates(raw_rows: List[dict], profile: Profile) -> List[Optional[Date]]
         try:
             parsed.append(datetime.strptime(text, fmt).date())
         except ValueError as exc:
+            # Do not include the raw text (see parse_decimal for why).
             raise CoercionError(
-                f"cannot parse date {text!r} with format {fmt!r}"
+                f"cannot parse a date cell ({len(text)} char(s)) with format {fmt!r}"
             ) from exc
 
     fill_fn = strategies.DATE_FILL[profile.dates.fill]
