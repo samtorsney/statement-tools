@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Sensitive financial data — NEVER commit these.
+# This folder holds real bank statements; keep raw and derived data untracked.
+# ---------------------------------------------------------------------------
+
+# Source + derived statement files (any location in the repo)
+*.pdf
+# Redacted PDFs are already covered by *.pdf above; listed explicitly so it's
+# unambiguous they must stay out of version control too.
+*_redacted*.pdf
+*.csv
+*.xlsx
+*.xls
+*.ofx
+*.qif
+
+# Redaction term lists (may contain account numbers, names, etc.)
+secrets.txt
+*terms*.txt
+*.secrets
+
+# Notebooks can embed statement data in their saved cell outputs
+*.ipynb
+
+# ---------------------------------------------------------------------------
+# Python / tooling
+# ---------------------------------------------------------------------------
+.venv/
+__pycache__/
+*.pyc
+
+# Local Claude Code overrides (the shared .claude/settings.json IS tracked)
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# NOTE: source code (*.py) is intentionally NOT ignored so you can version it.
+# All PDFs — including redacted ones — are intentionally kept OUT of git.
+# ---------------------------------------------------------------------------

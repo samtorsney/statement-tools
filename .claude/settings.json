@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**/*_redacted*.pdf)"
+    ],
+    "deny": [
+      "Read(**/*_unlocked.pdf)",
+      "Read(**/boi_statement_20??_??_??.pdf)",
+      "Read(**/*.csv)",
+      "Read(**/*.xlsx)",
+      "Read(**/*.xls)",
+      "Read(**/*.ofx)",
+      "Read(**/*.qif)",
+      "Read(**/redact_terms.txt)",
+      "Read(**/*terms*.txt)",
+      "Read(**/secrets.txt)",
+      "Read(**/*.secrets)"
+    ]
+  }
+}
