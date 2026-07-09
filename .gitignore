@@ -22,6 +22,10 @@ secrets.txt
 # Notebooks can embed statement data in their saved cell outputs
 *.ipynb
 
+# Personal categorisation rules: payee/merchant names mapped to categories.
+# Explicit path (not a glob) so categorise/builtin_rules.yaml stays tracked.
+category_rules.yaml
+
 # ---------------------------------------------------------------------------
 # Python / tooling
 # ---------------------------------------------------------------------------
