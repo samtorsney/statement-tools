@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = [
-    "pdfplumber>=0.11.8",
+    # Upper bound is deliberate, not a stray exact pin: pdfplumber 0.11.9 and
+    # 0.11.10 both declare an exact dependency on a pdfminer.six release that
+    # is not available on PyPI at the time of writing, which breaks
+    # `pip install` entirely. Revisit this ceiling once that's resolved
+    # upstream.
+    "pdfplumber>=0.11.8,<0.11.9",
     "pandas>=2.3.3",
     "numpy>=2.0.2",
     "pypdfium2>=5.3.0",
