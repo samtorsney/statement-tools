@@ -1,0 +1,58 @@
+# Builtin structural categorisation rules (committed; PII-free).
+#
+# These patterns derive from bank statement formats, not from any person's
+# transactions. Personal payee/merchant rules live in the gitignored
+# category_rules.yaml at the repo root, which is evaluated BEFORE this file.
+# Within this file, first match wins, so order is load-bearing:
+#   - the NEPOSCHG / NEATMCHG fee codes precede the generic prefixes;
+#   - "GOVT DUTY ATM" (government ATM duty) precedes the plain "ATM" prefix;
+#   - the "TX" card-payment prefix precedes the foreign-POS country regex;
+#   - SALARY is last so fee/card codes never mislabel as income.
+
+# --- Bank of Ireland current account -------------------------------------
+- match: regex
+  pattern: '^NEPOSCHG(?P<currency>[A-Z]{3})\s\d+\.\d{2}$'
+  category: Fees/Card FX
+  account: boi_current
+  extract: currency
+
+- match: regex
+  pattern: '^NEATMCHG(?P<currency>[A-Z]{3})\s\d+\.\d{2}$'
+  category: Fees/ATM
+  account: boi_current
+  extract: currency
+
+- match: prefix
+  pattern: 'GOVT DUTY ATM'
+  category: Fees/ATM Tax
+  account: boi_current
+
+- match: prefix
+  pattern: 'ATM'
+  category: Cash/ATM
+  account: boi_current
+
+- match: prefix
+  pattern: 'TX'
+  category: Card Payment
+  account: boi_current
+
+# Foreign point-of-sale rows end in 4 digits + an ISO country code.
+- match: regex
+  pattern: '\d{4}(?P<country>[A-Z]{2})'
+  category: Card Payment
+  account: boi_current
+  extract: country
+
+- match: contains
+  pattern: 'SALARY'
+  category: Income/Salary
+  account: boi_current
+
+# --- Revolut current account ----------------------------------------------
+- match: regex
+  pattern: '^Transfer (?:to|from) (?P<name>.+)$'
+  category: Transfer
+  account: revolut_current
+  transfer: true
+  extract: name
