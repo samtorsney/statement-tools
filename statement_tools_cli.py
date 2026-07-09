@@ -12,14 +12,14 @@ Mapping (see docs/superpowers/specs/2026-07-09-public-sharing-design.md §1):
     statements categorise ...        -> categorise.cli main(["run", ...])
     statements report ...            -> categorise.cli main(["report", ...])
     statements triage ...            -> triage.cli main([...])
-    statements chart sankey|monthly|savings ...  -> charts.cli main([<type>, ...])
+    statements chart sankey|monthly|savings|overview ... -> charts.cli main([<type>, ...])
 """
 from __future__ import annotations
 
 import sys
 from typing import List, Optional, Sequence
 
-CHART_SUBCOMMANDS = ("sankey", "monthly", "savings")
+CHART_SUBCOMMANDS = ("sankey", "monthly", "savings", "overview")
 
 
 def _usage() -> str:
@@ -32,7 +32,8 @@ def _usage() -> str:
         "  categorise                     apply categorisation rules to a canonical CSV\n"
         "  report                         write an uncategorised-rows report to file\n"
         "  triage                         interactive wizard for the uncategorised long tail\n"
-        "  chart sankey|monthly|savings   render a chart from a categorised CSV\n"
+        "  chart sankey|monthly|savings|overview\n"
+        "                                 render a chart (or the combined overview) from a categorised CSV\n"
         "\n"
         "run `statements <command> --help` for command-specific options."
     )

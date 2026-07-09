@@ -25,6 +25,7 @@ import pandas as pd
 
 from .monthly import build_monthly_bar, monthly_delta_table
 from .netting import DEFAULT_WINDOW_DAYS, net_transfers
+from .overview import build_overview
 from .sankey import build_sankey
 from .savings import build_savings_chart
 
@@ -238,6 +239,47 @@ def cmd_savings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_overview(args: argparse.Namespace) -> int:
+    """Combined overview report: unlike the other three subcommands, an
+    empty in-range frame is an error (count-only message, no HTML
+    written) -- there is nothing meaningful to summarise."""
+    try:
+        input_path = Path(args.input)
+        date_from = _parse_date_arg(args.date_from, "--from")
+        date_to = _parse_date_arg(args.date_to, "--to")
+        if date_from > date_to:
+            raise InputError("--from must not be after --to")
+
+        frame = _prepare_frame(input_path)
+        total_rows = len(frame)
+        in_range = _filter_date_range(frame, date_from, date_to)
+        if in_range.empty:
+            raise InputError(
+                f"no rows in range ({total_rows} row(s) read, 0 in range {date_from}..{date_to})"
+            )
+    except InputError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    result = build_overview(frame, date_from, date_to, window_days=args.window_days)
+
+    unmatched_path = _write_unmatched(result.netting.unmatched, out_dir)
+    html_path = out_dir / "overview.html"
+    html_path.write_text(result.html, encoding="utf-8")
+
+    counts = result.counts
+    print(
+        f"read {counts['total_rows']} row(s); {counts['in_range_rows']} in range; "
+        f"{counts['uncategorised']} uncategorised; "
+        f"{counts['unmatched_transfers']} unmatched transfer(s); "
+        f"wrote {html_path} and {unmatched_path}"
+    )
+    return 0
+
+
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--in", dest="input", required=True, help="categorised CSV input")
     parser.add_argument("--from", dest="date_from", required=True, help="range start, YYYY-MM-DD (inclusive)")
@@ -266,6 +308,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_savings = sub.add_parser("savings", help="cumulative savings + balance trajectory line")
     _add_common_args(p_savings)
     p_savings.set_defaults(func=cmd_savings)
+
+    p_overview = sub.add_parser(
+        "overview", help="combined overview report: tiles, sankey, rankings, trends, notables, health"
+    )
+    _add_common_args(p_overview)
+    p_overview.set_defaults(func=cmd_overview)
 
     return parser
 
