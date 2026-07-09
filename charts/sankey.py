@@ -11,53 +11,201 @@ Node layers, left to right:
   0. income sources   -- label = subcategory (falling back to category)
                           of non-transfer rows with amount > 0
   1. accounts
-  2. parent categories -- non-transfer rows with amount < 0
-  3. child categories   -- subcategory of the same rows
+  2. parent categories -- non-transfer rows with amount < 0, plus the two
+                           fixed buckets described below
+  3. child categories   -- subcategory of the same rows, when they clear
+                           ``min_share_sub``
 
 Matched transfer pairs render as direct account -> account links (source =
 the paying leg's account, target = the receiving leg's account), bypassing
-the category layers entirely. Unmatched transfer rows (``pair_id`` is
-null) are excluded here -- they are surfaced only in the
-``unmatched_transfers.csv`` report, never silently folded into spend or
-income.
+the category layers entirely.
+
+Unmatched transfer legs (``pair_id`` is null) are no longer dropped: every
+one of them is aggregated into a single ``Transfers (unmatched)`` node at
+the parent-category layer, never labelled with the row's own
+category/subcategory (which may be a person/payee name -- names must never
+become nodes). By convention this one node carries *both* directions:
+an unpaired debit leg (money left an account without a partner) flows
+account -> node; an unpaired credit leg (money arrived without a partner)
+flows node -> account. This makes the node's in/out layer-order
+inconsistent with the pure left-to-right income->account->category->
+subcategory progression (a "backward" ribbon for credit legs) -- that is a
+deliberate, documented trade-off in exchange for correctness (unmatched
+transfers must be visible and never silently folded into spend or income).
+It is safe here because node positions are pinned explicitly
+(``arrangement="fixed"``, see below) rather than left to plotly's automatic
+depth detection, so the backward ribbon is just a curve, not a layout
+error. The alternative of splitting unmatched credit legs onto a second,
+income-layer node was rejected because the spec calls for exactly *one*
+"Transfers (unmatched)" node, not two.
+
+Small-share aggregation (``min_share`` / ``min_share_sub``): a parent
+category (or income source) whose share of total non-transfer spend (or
+income) falls below ``min_share`` merges into a single "Other" ("Other
+income" on the income side) node -- never its own node, never a fraction of
+one. Within a kept parent, a subcategory whose share of total spend falls
+below ``min_share_sub`` folds back into the parent: its value still counts
+towards the parent's total (via the account->category link) but never gets
+its own category->subcategory link or node. A category with no
+subcategory rows at all (or only merged/folded ones) simply terminates at
+the category layer -- there is no "(none)" placeholder, ever.
+"(uncategorised)" is exempt from ``min_share`` merging: it is a data-health
+signal, not a size ranking, so it always gets its own node when any
+uncategorised rows exist.
+
+Node ordering, height and color follow the ``dataviz`` skill:
+
+- Nodes are sorted by total size (descending) within each layer, and given
+  explicit ``x``/``y`` coordinates (``arrangement="fixed"``) so this order
+  is exactly what renders -- not merely a hint to plotly's own crossing-
+  minimising layout.
+- Figure height is derived from the busiest layer's node count (with a
+  floor), instead of one fixed constant, so a dense subcategory layer gets
+  room to breathe.
+- Parent categories are assigned one hue each, in size order, from the
+  categorical palette (see the ``dataviz`` skill's ``references/
+  palette.md``), minus its first slot (reserved for the income family so
+  the two node families never share a hue). Subcategory nodes inherit a
+  lighter tint of their parent's hue. Links are tinted by their source
+  node's color at low alpha. Accounts are neutral gray. "(uncategorised)"
+  and "Transfers (unmatched)" use the fixed status "warning" color, never
+  reused for anything else. "Other" / "Other income" use a separate
+  neutral tone (distinct from both the account gray and the warning color)
+  so a reader never mistakes an aggregation bucket for a data-quality
+  problem.
+- Node labels append a compact amount (e.g. "Groceries · 7.0k"), with a
+  currency symbol prefix when the frame's currency is uniform.
+
+Scope note: the returned figure uses fixed (light-mode) hex colors -- it
+does not repaint itself for a dark host page the way the surrounding HTML
+chrome (see ``charts/overview.py``) does via CSS custom properties. Plotly
+bakes mark colors into the SVG at render time; making the figure itself
+theme-reactive would need a second render path and is out of scope here.
 """
 from __future__ import annotations
 
 import dataclasses
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import plotly.graph_objects as go
 
+from .insights import detect_currency
+
 UNCATEGORISED = "(uncategorised)"
-NO_SUBCATEGORY = "(none)"
+OTHER = "Other"
+OTHER_INCOME = "Other income"
+TRANSFERS_UNMATCHED = "Transfers (unmatched)"
 
 LAYER_INCOME = 0
 LAYER_ACCOUNT = 1
 LAYER_CATEGORY = 2
 LAYER_SUBCATEGORY = 3
 
+DEFAULT_MIN_SHARE = Decimal("0.01")
+DEFAULT_MIN_SHARE_SUB = Decimal("0.005")
+
+# -- Color system (dataviz skill categorical palette, light mode) ---------
+# Slot 0 (blue) is reserved for the income family; parent spend categories
+# draw from the remaining 7 slots, in size order, never cycling back to
+# blue (an 8th+ parent falls back to modulo re-use, noted below, but the
+# fixture this build ships with never exceeds 7 real parents).
+_CATEGORICAL = [
+    "#2a78d6",  # blue    -- reserved for income
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#008300",  # green
+    "#4a3aa7",  # violet
+    "#e34948",  # red
+    "#e87ba4",  # magenta
+    "#eb6834",  # orange
+]
+INCOME_HUE = _CATEGORICAL[0]
+SPEND_PALETTE = _CATEGORICAL[1:]
+
+ACCOUNT_NEUTRAL = "#898781"
+OTHER_NEUTRAL = "#c3c2b7"
+WARNING_COLOR = "#fab219"
+
+LINK_ALPHA = 0.35
+SUBCATEGORY_TINT = 0.55
+
+CURRENCY_SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
+
+MIN_HEIGHT = 500
+PX_PER_NODE = 26
+HEIGHT_MARGIN = 160
+
+
+def _as_decimal(value: Union[Decimal, float, str]) -> Decimal:
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
 
 def _income_label(category: str, subcategory: str) -> str:
     return subcategory or category or UNCATEGORISED
 
 
+def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _tint(hex_color: str, amount: float = SUBCATEGORY_TINT) -> str:
+    """Lighten `hex_color` towards white by `amount` (0..1)."""
+    r, g, b = _hex_to_rgb(hex_color)
+    r = round(r + (255 - r) * amount)
+    g = round(g + (255 - g) * amount)
+    b = round(b + (255 - b) * amount)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = _hex_to_rgb(hex_color)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _format_amount(value: float, currency: Optional[str]) -> str:
+    magnitude = abs(value)
+    if magnitude >= 1_000_000:
+        compact = f"{magnitude / 1_000_000:.1f}M"
+    elif magnitude >= 1_000:
+        compact = f"{magnitude / 1_000:.1f}k"
+    elif magnitude >= 10:
+        compact = f"{magnitude:.0f}"
+    else:
+        compact = f"{magnitude:.2f}"
+    if currency:
+        symbol = CURRENCY_SYMBOLS.get(currency, currency + " ")
+        return f"{symbol}{compact}"
+    return compact
+
+
+def _node_label(name: str, value: float, currency: Optional[str]) -> str:
+    return f"{name} · {_format_amount(value, currency)}"
+
+
 @dataclasses.dataclass
 class NodeRegistry:
     """Assigns a stable integer index to each (layer, key) node, in
-    first-seen order, while keeping a separate human-readable label."""
+    first-seen order, while keeping a separate human-readable label, a
+    color "role" (for the color system), and the raw key (so a
+    subcategory node can look up its parent's key for tinting)."""
 
     _index: Dict[Tuple[int, object], int] = dataclasses.field(default_factory=dict)
     labels: List[str] = dataclasses.field(default_factory=list)
     layers: List[int] = dataclasses.field(default_factory=list)
+    roles: List[str] = dataclasses.field(default_factory=list)
+    keys: List[object] = dataclasses.field(default_factory=list)
 
-    def get(self, layer: int, key: object, label: str) -> int:
+    def get(self, layer: int, key: object, label: str, role: str = "category") -> int:
         k = (layer, key)
         if k not in self._index:
             self._index[k] = len(self.labels)
             self.labels.append(label)
             self.layers.append(layer)
+            self.roles.append(role)
+            self.keys.append(key)
         return self._index[k]
 
 
@@ -72,48 +220,156 @@ def _add_link(
     agg["count"] += count
 
 
-def aggregate(frame: pd.DataFrame) -> Tuple[NodeRegistry, Dict[Tuple[int, int], LinkTotals]]:
+def aggregate(
+    frame: pd.DataFrame,
+    *,
+    min_share: Union[Decimal, float] = DEFAULT_MIN_SHARE,
+    min_share_sub: Union[Decimal, float] = DEFAULT_MIN_SHARE_SUB,
+) -> Tuple[NodeRegistry, Dict[Tuple[int, int], LinkTotals]]:
     """Aggregate `frame` into a node registry + link totals keyed by
     (source index, target index). Split out from `build_sankey` so tests
     (and the CLI, for the run summary) can inspect totals without touching
     plotly figure internals."""
+    min_share = _as_decimal(min_share)
+    min_share_sub = _as_decimal(min_share_sub)
+
     nodes = NodeRegistry()
     links: Dict[Tuple[int, int], LinkTotals] = {}
 
     is_transfer = frame["is_transfer"].astype(bool)
-    paired = frame[is_transfer & frame["pair_id"].notna()]
 
+    # -- Matched transfer pairs: direct account -> account links. ---------
+    paired = frame[is_transfer & frame["pair_id"].notna()]
     for _pair_id, group in paired.groupby("pair_id"):
         if len(group) != 2:
             continue  # malformed pairing -- ignore rather than guess
         row_a, row_b = (group.iloc[0], group.iloc[1])
         payer, payee = (row_a, row_b) if row_a["amount"] < 0 else (row_b, row_a)
-        src = nodes.get(LAYER_ACCOUNT, str(payer["account"]), str(payer["account"]))
-        dst = nodes.get(LAYER_ACCOUNT, str(payee["account"]), str(payee["account"]))
+        src = nodes.get(LAYER_ACCOUNT, str(payer["account"]), str(payer["account"]), "account")
+        dst = nodes.get(LAYER_ACCOUNT, str(payee["account"]), str(payee["account"]), "account")
         _add_link(links, src, dst, abs(payer["amount"]), 2)
 
-    for _, row in frame[~is_transfer].iterrows():
+    # -- Unmatched transfer legs: one aggregate node, never the row's own
+    # category/subcategory text (which may be a person/payee name). ------
+    unmatched = frame[is_transfer & frame["pair_id"].isna()]
+    xfer_key = "__transfers_unmatched__"
+    for _, row in unmatched.iterrows():
         amount = row["amount"]
+        if amount == 0:
+            continue
         account = str(row["account"])
-        category = row["category"] or ""
-        subcategory = row["subcategory"] or ""
+        acct_idx = nodes.get(LAYER_ACCOUNT, account, account, "account")
+        xfer_idx = nodes.get(LAYER_CATEGORY, xfer_key, TRANSFERS_UNMATCHED, "warning")
+        if amount < 0:
+            _add_link(links, acct_idx, xfer_idx, -amount, 1)
+        else:
+            _add_link(links, xfer_idx, acct_idx, amount, 1)
 
-        if amount > 0:
-            label = _income_label(category, subcategory)
-            src = nodes.get(LAYER_INCOME, label, label)
-            dst = nodes.get(LAYER_ACCOUNT, account, account)
-            _add_link(links, src, dst, amount, 1)
-        elif amount < 0:
-            cat_label = category or UNCATEGORISED
-            sub_label = subcategory or NO_SUBCATEGORY
-            src1 = nodes.get(LAYER_ACCOUNT, account, account)
-            dst1 = nodes.get(LAYER_CATEGORY, cat_label, cat_label)
-            _add_link(links, src1, dst1, -amount, 1)
+    non_transfer = frame[~is_transfer]
 
-            src2 = nodes.get(LAYER_CATEGORY, cat_label, cat_label)
-            dst2 = nodes.get(LAYER_SUBCATEGORY, (cat_label, sub_label), sub_label)
-            _add_link(links, src2, dst2, -amount, 1)
-        # amount == 0: no flow either way
+    # -- Income: aggregate per (account, label); merge low-share labels
+    # into "Other income" using each label's GLOBAL (cross-account) share.
+    income_rows = non_transfer[non_transfer["amount"] > 0]
+    income_label_totals: Dict[str, Decimal] = {}
+    income_link_raw: Dict[Tuple[str, str], Tuple[Decimal, int]] = {}
+    for _, row in income_rows.iterrows():
+        label = _income_label(row["category"] or "", row["subcategory"] or "")
+        account = str(row["account"])
+        amount = row["amount"]
+        income_label_totals[label] = income_label_totals.get(label, Decimal("0")) + amount
+        v, c = income_link_raw.get((account, label), (Decimal("0"), 0))
+        income_link_raw[(account, label)] = (v + amount, c + 1)
+
+    total_income = sum(income_label_totals.values()) if income_label_totals else Decimal("0")
+    merged_income_labels = set()
+    if total_income > 0:
+        for label, total in income_label_totals.items():
+            if total / total_income < min_share:
+                merged_income_labels.add(label)
+
+    for (account, label), (value, count) in income_link_raw.items():
+        merged = label in merged_income_labels
+        display_label = OTHER_INCOME if merged else label
+        role = "other" if merged else "income"
+        src = nodes.get(LAYER_INCOME, display_label, display_label, role)
+        dst = nodes.get(LAYER_ACCOUNT, account, account, "account")
+        _add_link(links, src, dst, value, count)
+
+    # -- Spend: same two-pass shape (global share for merge decisions,
+    # then build the actual per-account/per-subcategory links). ----------
+    spend_rows = non_transfer[non_transfer["amount"] < 0]
+
+    category_totals: Dict[str, Decimal] = {}
+    for _, row in spend_rows.iterrows():
+        cat = row["category"] or ""
+        label = UNCATEGORISED if cat == "" else cat
+        category_totals[label] = category_totals.get(label, Decimal("0")) + (-row["amount"])
+
+    total_spend = sum(category_totals.values()) if category_totals else Decimal("0")
+    merged_categories = set()
+    if total_spend > 0:
+        for label, total in category_totals.items():
+            if label == UNCATEGORISED:
+                continue  # a data-health signal, never merged away
+            if total / total_spend < min_share:
+                merged_categories.add(label)
+
+    def _display_label(cat: str) -> str:
+        label = UNCATEGORISED if cat == "" else cat
+        if label == UNCATEGORISED:
+            return UNCATEGORISED
+        return OTHER if label in merged_categories else label
+
+    sub_totals: Dict[Tuple[str, str], Decimal] = {}
+    for _, row in spend_rows.iterrows():
+        cat = row["category"] or ""
+        label = UNCATEGORISED if cat == "" else cat
+        sub = row["subcategory"] or ""
+        if sub == "" or label == UNCATEGORISED or label in merged_categories:
+            continue
+        key = (label, sub)
+        sub_totals[key] = sub_totals.get(key, Decimal("0")) + (-row["amount"])
+
+    folded_subs = set()
+    if total_spend > 0:
+        for key, total in sub_totals.items():
+            if total / total_spend < min_share_sub:
+                folded_subs.add(key)
+
+    account_category_raw: Dict[Tuple[str, str], Tuple[Decimal, int]] = {}
+    category_sub_raw: Dict[Tuple[str, str], Tuple[Decimal, int]] = {}
+
+    for _, row in spend_rows.iterrows():
+        account = str(row["account"])
+        cat = row["category"] or ""
+        label = UNCATEGORISED if cat == "" else cat
+        sub = row["subcategory"] or ""
+        amount = -row["amount"]
+        display_label = _display_label(cat)
+
+        v, c = account_category_raw.get((account, display_label), (Decimal("0"), 0))
+        account_category_raw[(account, display_label)] = (v + amount, c + 1)
+
+        if display_label not in (UNCATEGORISED, OTHER) and sub != "" and (label, sub) not in folded_subs:
+            key = (display_label, sub)
+            v2, c2 = category_sub_raw.get(key, (Decimal("0"), 0))
+            category_sub_raw[key] = (v2 + amount, c2 + 1)
+
+    for (account, display_label), (value, count) in account_category_raw.items():
+        if display_label == UNCATEGORISED:
+            role = "warning"
+        elif display_label == OTHER:
+            role = "other"
+        else:
+            role = "category"
+        src = nodes.get(LAYER_ACCOUNT, account, account, "account")
+        dst = nodes.get(LAYER_CATEGORY, display_label, display_label, role)
+        _add_link(links, src, dst, value, count)
+
+    for (display_label, sub), (value, count) in category_sub_raw.items():
+        src = nodes.get(LAYER_CATEGORY, display_label, display_label, "category")
+        dst = nodes.get(LAYER_SUBCATEGORY, (display_label, sub), sub, "subcategory")
+        _add_link(links, src, dst, value, count)
 
     return nodes, links
 
@@ -129,28 +385,107 @@ def _node_totals(
     return [(float(v), c) for v, c in totals]
 
 
-def build_sankey(frame: pd.DataFrame) -> go.Figure:
+def _assign_colors(nodes: NodeRegistry, totals: List[Tuple[float, int]]) -> List[str]:
+    colors: List[Optional[str]] = [None] * len(nodes.labels)
+
+    category_indices = [
+        i for i in range(len(nodes.labels)) if nodes.layers[i] == LAYER_CATEGORY and nodes.roles[i] == "category"
+    ]
+    category_indices.sort(key=lambda i: (-totals[i][0], i))
+
+    category_color: Dict[str, str] = {}
+    for rank, idx in enumerate(category_indices):
+        hue = SPEND_PALETTE[rank % len(SPEND_PALETTE)]
+        colors[idx] = hue
+        category_color[nodes.labels[idx]] = hue
+
+    for i, role in enumerate(nodes.roles):
+        if colors[i] is not None:
+            continue
+        if role == "account":
+            colors[i] = ACCOUNT_NEUTRAL
+        elif role == "income":
+            colors[i] = INCOME_HUE
+        elif role == "other":
+            colors[i] = OTHER_NEUTRAL
+        elif role == "warning":
+            colors[i] = WARNING_COLOR
+        elif role == "subcategory":
+            parent_label = nodes.keys[i][0]
+            colors[i] = _tint(category_color.get(parent_label, OTHER_NEUTRAL))
+        else:  # pragma: no cover -- defensive fallback, no known role hits this
+            colors[i] = OTHER_NEUTRAL
+
+    return [c for c in colors]  # type: ignore[misc]
+
+
+def build_sankey(
+    frame: pd.DataFrame,
+    *,
+    min_share: Union[Decimal, float] = DEFAULT_MIN_SHARE,
+    min_share_sub: Union[Decimal, float] = DEFAULT_MIN_SHARE_SUB,
+) -> go.Figure:
     """Build the Sankey `go.Figure`. Hover shows the flow amount and
-    transaction count for both links and nodes."""
-    nodes, links = aggregate(frame)
+    transaction count for both links and nodes; node labels also show a
+    compact amount inline (see module docstring for the color/label/layout
+    system)."""
+    nodes, links = aggregate(frame, min_share=min_share, min_share_sub=min_share_sub)
+    currency = detect_currency(frame)
+    totals = _node_totals(nodes, links)
+    colors = _assign_colors(nodes, totals)
+
+    layer_groups: Dict[int, List[int]] = {}
+    for idx, layer in enumerate(nodes.layers):
+        layer_groups.setdefault(layer, []).append(idx)
+    for layer in layer_groups:
+        layer_groups[layer].sort(key=lambda i: (-totals[i][0], i))
+
+    ordered_layers = sorted(layer_groups)
+    n_layers = len(ordered_layers)
+
+    remap: Dict[int, int] = {}
+    xs: List[float] = []
+    ys: List[float] = []
+    new_order: List[int] = []
+    for pos, layer in enumerate(ordered_layers):
+        x = 0.5 if n_layers == 1 else 0.001 + 0.998 * (pos / (n_layers - 1))
+        group = layer_groups[layer]
+        count = len(group)
+        for rank, idx in enumerate(group):
+            remap[idx] = len(new_order)
+            new_order.append(idx)
+            xs.append(x)
+            y = (rank + 0.5) / count
+            ys.append(min(max(y, 0.001), 0.999))
+
+    labels = [_node_label(nodes.labels[i], totals[i][0], currency) for i in new_order]
+    node_colors = [colors[i] for i in new_order]
+    node_customdata = [[totals[i][0], totals[i][1]] for i in new_order]
 
     sources: List[int] = []
     targets: List[int] = []
     values: List[float] = []
+    link_colors: List[str] = []
     link_customdata: List[List[float]] = []
     for (src, dst), agg in links.items():
-        sources.append(src)
-        targets.append(dst)
+        sources.append(remap[src])
+        targets.append(remap[dst])
         values.append(float(agg["value"]))
+        link_colors.append(_rgba(colors[src], LINK_ALPHA))
         link_customdata.append([float(agg["value"]), agg["count"]])
 
-    node_customdata = [[value, count] for value, count in _node_totals(nodes, links)]
+    max_layer_count = max((len(g) for g in layer_groups.values()), default=1)
+    height = max(MIN_HEIGHT, max_layer_count * PX_PER_NODE + HEIGHT_MARGIN)
 
     fig = go.Figure(
         data=[
             go.Sankey(
+                arrangement="fixed",
                 node=dict(
-                    label=nodes.labels,
+                    label=labels,
+                    x=xs,
+                    y=ys,
+                    color=node_colors,
                     customdata=node_customdata,
                     hovertemplate="%{label}<br>total: %{customdata[0]:.2f}"
                     "<br>transactions: %{customdata[1]}<extra></extra>",
@@ -159,6 +494,7 @@ def build_sankey(frame: pd.DataFrame) -> go.Figure:
                     source=sources,
                     target=targets,
                     value=values,
+                    color=link_colors,
                     customdata=link_customdata,
                     hovertemplate="%{source.label} -> %{target.label}"
                     "<br>amount: %{customdata[0]:.2f}"
@@ -167,4 +503,5 @@ def build_sankey(frame: pd.DataFrame) -> go.Figure:
             )
         ]
     )
+    fig.update_layout(height=height, font=dict(size=12))
     return fig
