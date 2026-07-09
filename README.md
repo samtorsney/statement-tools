@@ -29,7 +29,11 @@ statement (PDF or CSV)  --parse-->  canonical transaction CSV
 - **Chart**: a categorised CSV over a date range becomes a Sankey diagram of
   money flow, a monthly stacked spend bar with a month-over-month delta
   table, or a cumulative-savings/balance line — as standalone HTML files
-  (via Plotly) that open in any browser.
+  (via Plotly) that open in any browser. `chart overview` combines them into
+  a single report page with headline stat tiles (income / spend / net /
+  savings rate), top categories and merchants, biggest movers vs the
+  preceding period, notable transactions, and a data-health panel
+  (uncategorised spend, unmatched transfers, per-account coverage).
 - **Triage**: an interactive terminal wizard turns the long tail of
   uncategorised transactions into new personal rules without hand-editing
   YAML.
@@ -87,6 +91,19 @@ statements chart sankey --in categorised.csv --from 2026-01-01 --to 2026-01-31 -
 Open `reports/sankey.html` in a browser. `chart monthly` and `chart savings`
 take the same `--in/--from/--to/--out` arguments and write `monthly.html` /
 `savings.html` respectively.
+
+Or generate everything as one page — the Sankey plus stat tiles, rankings,
+movers vs the preceding period, notable transactions, and a data-health
+panel:
+
+```sh
+statements chart overview --in categorised.csv --from 2026-01-01 --to 2026-01-31 --out reports/
+```
+
+This writes a self-contained `reports/overview.html` (works offline; no
+network calls). Sections adapt to the range — a single month skips the
+monthly trend bars, and the movers comparison is omitted when there's no
+data for the preceding window.
 
 ## 3. Adding a bank
 
