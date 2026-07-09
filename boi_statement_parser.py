@@ -259,6 +259,9 @@ def main():
 
         # process pdf
         pdf_df = process_statement(pdf)
+        if pdf_df.empty:
+            # Zero-transaction PDFs contribute nothing to the output
+            continue
         pdf_df["extracted_from"] = pdf.name
         dfs.append(pdf_df)
 
