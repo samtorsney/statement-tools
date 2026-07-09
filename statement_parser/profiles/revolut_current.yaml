@@ -29,8 +29,17 @@ dates:
   format: "%Y-%m-%d %H:%M:%S"
   fill: none
 
+# validate is "none" (not the normally-recommended "continuity") because
+# Revolut's export interleaves multiple Products (Current account, pockets/
+# vaults, currency exchanges) in one file sharing a single Balance column,
+# each with its own independent running balance -- so file-wide running-
+# balance continuity is not a valid invariant for this source: balances
+# legitimately jump at every product boundary. The balance is still
+# captured, just not continuity-checked. Prefer validate: continuity for
+# any source whose file tracks a single account's running balance
+# (see profiles/boi_current.yaml).
 balance:
   present: true
-  validate: continuity
+  validate: none
 
 skip_rows: []
