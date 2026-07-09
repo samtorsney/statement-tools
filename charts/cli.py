@@ -26,7 +26,7 @@ import pandas as pd
 from .monthly import build_monthly_bar, monthly_delta_table
 from .netting import DEFAULT_WINDOW_DAYS, net_transfers
 from .overview import build_overview
-from .sankey import build_sankey
+from .sankey import DEFAULT_MIN_SHARE, build_sankey
 from .savings import build_savings_chart
 
 REQUIRED_COLUMNS = (
@@ -180,7 +180,7 @@ def cmd_sankey(args: argparse.Namespace) -> int:
         return 1
 
     unmatched_path = _write_unmatched(result.unmatched, out_dir)
-    fig = build_sankey(result.netted)
+    fig = build_sankey(result.netted, min_share=args.min_share)
     html_path = out_dir / "sankey.html"
     fig.write_html(html_path)
 
@@ -264,7 +264,9 @@ def cmd_overview(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    result = build_overview(frame, date_from, date_to, window_days=args.window_days)
+    result = build_overview(
+        frame, date_from, date_to, window_days=args.window_days, min_share=args.min_share
+    )
 
     unmatched_path = _write_unmatched(result.netting.unmatched, out_dir)
     html_path = out_dir / "overview.html"
@@ -293,12 +295,23 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_min_share_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--min-share",
+        type=Decimal,
+        default=DEFAULT_MIN_SHARE,
+        help="parent-category (and income-source) share of total spend/income below which "
+        f"it merges into 'Other' (default {DEFAULT_MIN_SHARE})",
+    )
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="report")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_sankey = sub.add_parser("sankey", help="Sankey diagram of money flow")
     _add_common_args(p_sankey)
+    _add_min_share_arg(p_sankey)
     p_sankey.set_defaults(func=cmd_sankey)
 
     p_monthly = sub.add_parser("monthly", help="monthly stacked spend bar + MoM delta table")
@@ -313,6 +326,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "overview", help="combined overview report: tiles, sankey, rankings, trends, notables, health"
     )
     _add_common_args(p_overview)
+    _add_min_share_arg(p_overview)
     p_overview.set_defaults(func=cmd_overview)
 
     return parser

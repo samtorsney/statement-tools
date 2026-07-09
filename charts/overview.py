@@ -47,7 +47,7 @@ from .insights import (
 )
 from .monthly import build_monthly_bar
 from .netting import DEFAULT_WINDOW_DAYS, NettingResult, net_transfers
-from .sankey import build_sankey
+from .sankey import DEFAULT_MIN_SHARE, build_sankey
 from .savings import build_savings_chart
 
 MULTI_MONTH_THRESHOLD = 2
@@ -80,12 +80,15 @@ def build_overview(
     *,
     window_days: int = DEFAULT_WINDOW_DAYS,
     generated_at: Optional[datetime] = None,
+    min_share: Decimal = DEFAULT_MIN_SHARE,
 ) -> OverviewResult:
     """Assemble the overview page. `full_frame` is the whole categorised
     frame (already coerced to real dtypes, NOT pre-filtered to the date
     range) -- `movers` needs rows outside the range for its comparison
     window, so this function does its own range filtering rather than
-    accepting an already-filtered frame."""
+    accepting an already-filtered frame. `min_share` forwards to the
+    Sankey builder's small-share aggregation threshold (see
+    `charts.sankey`)."""
     in_range = _filter_range(full_frame, date_from, date_to)
 
     netting_result = net_transfers(in_range, window_days=window_days)
@@ -106,7 +109,9 @@ def build_overview(
             full_html=False, include_plotlyjs=False
         )
     savings_fragment = build_savings_chart(netted).to_html(full_html=False, include_plotlyjs=False)
-    sankey_fragment = build_sankey(netted).to_html(full_html=False, include_plotlyjs=False)
+    sankey_fragment = build_sankey(netted, min_share=min_share).to_html(
+        full_html=False, include_plotlyjs=False
+    )
 
     page_html = _render_page(
         date_from=date_from,
