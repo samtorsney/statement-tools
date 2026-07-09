@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "statement-tools"
+version = "0.1.0"
+description = "Bank statement parsing, categorisation, and charting: PDF/CSV statements -> a canonical transaction CSV -> declarative category rules -> Sankey/monthly/savings charts."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "pdfplumber>=0.11.8",
+    "pandas>=2.3.3",
+    "numpy>=2.0.2",
+    "pypdfium2>=5.3.0",
+    "pillow>=11.3.0",
+    "pyyaml>=6.0.3",
+    "plotly>=6.8.0",
+]
+
+[project.scripts]
+statements = "statement_tools_cli:main"
+
+[tool.setuptools]
+py-modules = ["statement_tools_cli"]
+
+[tool.setuptools.packages.find]
+include = ["statement_parser*", "categorise*", "charts*", "triage*"]
+
+[tool.setuptools.package-data]
+statement_parser = ["profiles/*.yaml"]
+categorise = ["builtin_rules.yaml"]
